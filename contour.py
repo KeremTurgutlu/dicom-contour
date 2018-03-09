@@ -9,10 +9,6 @@ import operator
 import warnings
 
 
-#########################
-####      FILES       ###
-#########################
-
 def get_smallest_dcm(path, ext='.dcm'):
     """
     Get smallest dcm file in size given path of target dir
@@ -156,10 +152,6 @@ def plot2dcontour(img_arr, contour_arr, figsize=(20, 20)):
     plt.show()
 
 
-#############################
-#### CREATE 3D NP ARRAYS ###
-############################
-
 def slice_order(path):
     """
     Takes path of directory that has the DICOM images and returns
@@ -238,9 +230,6 @@ def get_data(path, index):
 
     return np.array(images), np.array(contours)
 
-#############################
-#### FILL CONTOURS       ###
-############################
 
 def fill_contour(contour_arr):
     # get initial pixel positions
@@ -286,10 +275,6 @@ def fill_contour(contour_arr):
     return contour_arr
 
 
-#############################
-#### 2D IMAGE FILES      ###
-############################
-
 def create_image_mask_files(path, index, img_format='png'):
     """
     Create image and corresponding mask files under to folders '/images' and '/masks'
@@ -311,63 +296,3 @@ def create_image_mask_files(path, index, img_format='png'):
     for i in range(len(X)):
         plt.imsave(new_path + f'/images/image_{i}.{img_format}', X[i, :, :])
         plt.imsave(new_path + f'/masks/mask_{i}.{img_format}', Y[i, :, :])
-
-def list_directory_files(root):
-    file_paths = []
-    for path, subdirs, files in os.walk(root):
-        for name in files:
-            file_paths.append(os.path.join(path, name))
-    return file_paths
-
-def list_directory(path):
-    if path[-1] != '/':
-        path = path + '/'
-    return [path + p + '/' for p in os.listdir(path)]
-
-
-
-#############################
-####      PICKLE         ###
-############################
-
-
-import pickle
-
-def write_pickle(target_file, obj):
-    """
-    Pickle a python object to target file
-    """
-    with open(target_file, 'wb') as handle:
-        pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-def read_pickle(source_file):
-    """
-    Read a pickled python object from source file
-    """
-    with open(source_file, 'rb') as handle:
-        obj = pickle.load(handle)
-    return obj
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
