@@ -61,9 +61,6 @@ def get_roi_names(contour_data):
     return roi_seq_names
     
 
-#########################
-#### PLOT 2D CONTOURS ###
-#########################
 
 def coord2pixels(contour_dataset, path):
     """
