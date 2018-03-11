@@ -287,7 +287,7 @@ def create_image_mask_files(path, index, img_format='png'):
     Y = np.array([fill_contour(y) if y.max() == 1 else y for y in Y])
 
     # Create images and masks folders
-    new_path = '/'.join(path.split('/')[:-1])
+    new_path = '/'.join(path.split('/')[:-2])
     os.makedirs(new_path + '/images/', exist_ok=True)
     os.makedirs(new_path + '/masks/', exist_ok=True)
     for i in range(len(X)):
