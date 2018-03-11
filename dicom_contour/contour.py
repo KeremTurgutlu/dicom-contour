@@ -1,4 +1,4 @@
-import dicom
+import pydicom as dicom
 import numpy as np
 from scipy.sparse import csc_matrix
 import matplotlib.pyplot as plt
