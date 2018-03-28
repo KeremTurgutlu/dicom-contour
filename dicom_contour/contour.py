@@ -106,7 +106,6 @@ def coord2pixels(contour_dataset, path):
     return img_arr, contour_arr, img_ID
 
 
-
 def cfile2pixels(file, path, ROIContourSeq=0):
     """
     Given a contour file and path of related images return pixel arrays for contours
@@ -125,7 +124,18 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     RTV = f.ROIContourSequence[ROIContourSeq]
     # get contour datasets in a list
     contours = [contour for contour in RTV.ContourSequence]
-    img_contour_arrays = [coord2pixels(cdata, path) for cdata in contours]
+    img_contour_arrays = [coord2pixels(cdata, path) for cdata in contours]  # list of img_arr, contour_arr, im_id
+
+    # debug: there are multiple contours for the same image indepently
+    # sum contour arrays and generate new img_contour_arrays
+    contour_dict = defaultdict(int)
+    for im_arr, cntr_arr, im_id in img_contour_arrays:
+        contour_dict[im_id] += cntr_arr
+    image_dict = {}
+    for im_arr, cntr_arr, im_id in img_contour_arrays:
+        image_dict[im_id] = im_arr
+    img_contour_arrays = [(image_dict[k], contour_dict[k], k) for k in image_dict]
+
     return img_contour_arrays
 
 
