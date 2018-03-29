@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
      name='dicom-contour',
      packages=['dicom_contour'],    
-     version=0.4,
+     version=0.7,
      description='A library which converts DICOM images and contours into numpy arrays',
      author='Kerem Turgutlu',
      author_email='kcturgutlu@dons.usfca.edu',
