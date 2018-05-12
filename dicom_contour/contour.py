@@ -40,12 +40,14 @@ def get_contour_file(path):
     # get .dcm contour file
     fpaths = [path + f for f in os.listdir(path) if '.dcm' in f]
     n = 0
+    contour_file = None
     for fpath in fpaths:
         f = dicom.read_file(fpath)
         if 'ROIContourSequence' in dir(f):
             contour_file = fpath.split('/')[-1]
             n += 1
     if n > 1: warnings.warn("There are multiple contour files, returning the last one!")
+    if contour_file is None: print("No contour file found in directory")
     return contour_file
 
 def get_roi_names(contour_data):
