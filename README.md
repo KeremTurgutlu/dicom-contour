@@ -8,6 +8,8 @@ For installing from pip:
 
 A tutorial is available with file name `tutorial.ipynb`, for more questions feel free to start an issue.
 
+**New version is out, please check `RT2MASK.ipynb` for walkthrough**
+
 Hope this helps medical deep learning researchers in general and anyone who is working with DICOM files and want to do something beyond it :) 
 
 ![Raw Image vs Contoured Image](https://github.com/KeremTurgutlu/dicom-contour/blob/master/images/dicom1.png?raw=true "Raw Image vs Contoured Image")
