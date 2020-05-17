@@ -7,7 +7,52 @@ import os
 import shutil
 import operator
 import warnings
+import math
 
+# https://gist.github.com/JDWarner/1158a9515c7f1b1c21f1
+# Pure Python, usable speed but over 10x greater runtime than Cython version
+
+def floodfill(data, start_coords, fill_value):
+    """
+    Flood fill algorithm
+    
+    Parameters
+    ----------
+    data : (M, N) ndarray of uint8 type
+        Image with flood to be filled. Modified inplace.
+    start_coords : tuple
+        Length-2 tuple of ints defining (row, col) start coordinates.
+    fill_value : int
+        Value the flooded area will take after the fill.
+        
+    Returns
+    -------
+    data that has been modified inplace.
+    """  
+    xsize, ysize = data.shape
+    orig_value = data[start_coords[0], start_coords[1]]
+    
+    stack = set(((start_coords[0], start_coords[1]),))
+    if fill_value == orig_value:
+        raise ValueError("Filling region with same value "
+                         "already present is unsupported. "
+                         "Did you already fill this region?")
+
+    while stack:
+        x, y = stack.pop()
+
+        if data[x, y] == orig_value:
+            data[x, y] = fill_value
+            if x > 0:
+                stack.add((x - 1, y))
+            if x < (xsize - 1):
+                stack.add((x + 1, y))
+            if y > 0:
+                stack.add((x, y - 1))
+            if y < (ysize - 1):
+                stack.add((x, y + 1))
+
+    return data
 
 def get_smallest_dcm(path, ext='.dcm'):
     """
@@ -77,10 +122,23 @@ def coord2pixels(contour_dataset, path):
     """
 
     contour_coord = contour_dataset.ContourData
+
     # x, y, z coordinates of the contour in mm
+    x0 = contour_coord[len(contour_coord)-3]
+    y0 = contour_coord[len(contour_coord)-2]
+    z0 = contour_coord[len(contour_coord)-1]
     coord = []
     for i in range(0, len(contour_coord), 3):
-        coord.append((contour_coord[i], contour_coord[i + 1], contour_coord[i + 2]))
+        x = contour_coord[i]
+        y = contour_coord[i+1]
+        z = contour_coord[i+2]
+        l = math.sqrt((x-x0)*(x-x0) + (y-y0)*(y-y0) + (z-z0)*(z-z0))
+        l = math.ceil(l*2)+1
+        for j in range(1, l+1):
+          coord.append([(x-x0)*j/l+x0, (y-y0)*j/l+y0, (z-z0)*j/l+z0])
+        x0 = x
+        y0 = y
+        z0 = z
 
     # extract the image id corresponding to given countour
     # read that dicom file
@@ -95,7 +153,7 @@ def coord2pixels(contour_dataset, path):
     origin_x, origin_y, _ = img.ImagePositionPatient
 
     # y, x is how it's mapped
-    pixel_coords = [(np.ceil((y - origin_y) / y_spacing), np.ceil((x - origin_x) / x_spacing)) for x, y, _ in coord]
+    pixel_coords = [(np.round((y - origin_y) / y_spacing), np.round((x - origin_x) / x_spacing)) for x, y, _ in coord]
 
     # get contour data for the image
     rows = []
@@ -177,6 +235,7 @@ def slice_order(path):
         try:
             f = dicom.read_file(path + '/' + s)
             f.pixel_array  # to ensure not to read contour file
+            assert f.Modality != 'RTDOSE'
             slices.append(f)
         except:
             continue
@@ -206,20 +265,20 @@ def get_contour_dict(contour_file, path, index):
 
     return contour_dict
 
-def get_data(path, index):
+def get_data(path, contour_file, index):
     """
     Generate image array and contour array
     Inputs:
         path (str): path of the the directory that has DICOM files in it
-        contour_dict (dict): dictionary created by get_contour_dict
-        index (int): index of the 
+        contour_file: structure file
+        index (int): index of the structure
     """
     images = []
     contours = []
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get contour file
-    contour_file = get_contour_file(path)
+    # contour_file = get_contour_file(path)
     # get slice orders
     ordered_slices = slice_order(path)
     # get contour dict
@@ -284,7 +343,7 @@ def fill_contour(contour_arr):
     return contour_arr
 
 
-def create_image_mask_files(path, index, img_format='png'):
+def create_image_mask_files(path, contour_file, index, img_format='png'):
     """
     Create image and corresponding mask files under to folders '/images' and '/masks'
     in the parent directory of path.
@@ -295,13 +354,13 @@ def create_image_mask_files(path, index, img_format='png'):
         img_format (str): image format to save by, png by default
     """
     # Extract Arrays from DICOM
-    X, Y = get_data(path, index)
-    Y = np.array([fill_contour(y) if y.max() == 1 else y for y in Y])
+    X, Y = get_data(path, contour_file, index)
+    Y = np.array([np.not_equal(floodfill(y, [0,0], 2), 2) if y.max() == 1 else y for y in Y])
 
     # Create images and masks folders
     new_path = '/'.join(path.split('/')[:-2])
     os.makedirs(new_path + '/images/', exist_ok=True)
     os.makedirs(new_path + '/masks/', exist_ok=True)
     for i in range(len(X)):
-        plt.imsave(new_path + f'/images/image_{i}.{img_format}', X[i, :, :])
-        plt.imsave(new_path + f'/masks/mask_{i}.{img_format}', Y[i, :, :])
+        plt.imsave(new_path + f'/images/image_{i}.{img_format}', X[i])
+        plt.imsave(new_path + f'/masks/mask_{i}.{img_format}', Y[i])
