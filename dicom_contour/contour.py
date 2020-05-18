@@ -2,6 +2,7 @@ import pydicom as dicom
 import numpy as np
 from scipy.sparse import csc_matrix
 import matplotlib.pyplot as plt
+import scipy.ndimage as scn
 from collections import defaultdict
 import os
 import shutil
@@ -9,65 +10,6 @@ import operator
 import warnings
 import math
 
-# https://gist.github.com/JDWarner/1158a9515c7f1b1c21f1
-# Pure Python, usable speed but over 10x greater runtime than Cython version
-
-def floodfill(data, start_coords, fill_value):
-    """
-    Flood fill algorithm
-    
-    Parameters
-    ----------
-    data : (M, N) ndarray of uint8 type
-        Image with flood to be filled. Modified inplace.
-    start_coords : tuple
-        Length-2 tuple of ints defining (row, col) start coordinates.
-    fill_value : int
-        Value the flooded area will take after the fill.
-        
-    Returns
-    -------
-    data that has been modified inplace.
-    """  
-    xsize, ysize = data.shape
-    orig_value = data[start_coords[0], start_coords[1]]
-    
-    stack = set(((start_coords[0], start_coords[1]),))
-    if fill_value == orig_value:
-        raise ValueError("Filling region with same value "
-                         "already present is unsupported. "
-                         "Did you already fill this region?")
-
-    while stack:
-        x, y = stack.pop()
-
-        if data[x, y] == orig_value:
-            data[x, y] = fill_value
-            if x > 0:
-                stack.add((x - 1, y))
-            if x < (xsize - 1):
-                stack.add((x + 1, y))
-            if y > 0:
-                stack.add((x, y - 1))
-            if y < (ysize - 1):
-                stack.add((x, y + 1))
-
-    return data
-
-def get_smallest_dcm(path, ext='.dcm'):
-    """
-    Get smallest dcm file in size given path of target dir
-    Inputs:
-        path (str): path of the the directory that has DICOM files in it
-        ext (str): extension of the DICOM files are defined with
-     Return:
-        
-    """
-    fsize_dict = {f:os.path.getsize(path +f) for f in os.listdir(path)}
-    for fname, size in [(k, fsize_dict[k]) for k in sorted(fsize_dict, key=fsize_dict.get, reverse=False)]:
-        if ext in fname:
-            return fname
-        
 def get_contour_file(path):
     """
     Get contour file from a given path by searching for ROIContourSequence 
@@ -107,8 +49,6 @@ def get_roi_names(contour_data):
     roi_seq_names = [roi_seq.ROIName for roi_seq in list(contour_data.StructureSetROISequence)]
     return roi_seq_names
     
-
-
 def coord2pixels(contour_dataset, path):
     """
     Given a contour dataset (a DICOM class) and path that has .dcm files of
@@ -141,7 +81,7 @@ def coord2pixels(contour_dataset, path):
         z0 = z
 
     # extract the image id corresponding to given countour
-    # read that dicom file
+    # read that dicom file (assumes filename = sopinstanceuid.dcm)
     img_ID = contour_dataset.ContourImageSequence[0].ReferencedSOPInstanceUID
     img = dicom.read_file(path + img_ID + '.dcm')
     img_arr = img.pixel_array
@@ -197,8 +137,6 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     img_contour_arrays = [(image_dict[k], contour_dict[k], k) for k in image_dict]
 
     return img_contour_arrays
-
-
 
 
 def plot2dcontour(img_arr, contour_arr, figsize=(20, 20)):
@@ -298,50 +236,35 @@ def get_data(path, contour_file, index):
 
     return np.array(images), np.array(contours)
 
+def get_mask(path, contour_file, index, filled=True):
+    """
+    Generate image array and contour array
+    Inputs:
+        path (str): path of the the directory that has DICOM files in it
+        contour_file: structure file
+        index (int): index of the structure
+    """
+    contours = []
+    # handle `/` missing
+    if path[-1] != '/': path += '/'
+    # get slice orders
+    ordered_slices = slice_order(path)
+    # get contour dict
+    contour_dict = get_contour_dict(contour_file, path, index)
 
-def fill_contour(contour_arr):
-    # get initial pixel positions
-    pixel_positions = np.array([(i, j) for i, j in zip(np.where(contour_arr)[0], np.where(contour_arr)[1])])
+    for k,v in ordered_slices:
+        # get data from contour dict
+        if k in contour_dict:
+            y = contour_dict[k][1]
+            y = scn.binary_fill_holes(y) if y.max() == 1 else y
+            contours.append(y)
+        # get data from dicom.read_file
+        else:
+            img_arr = dicom.read_file(path + k + '.dcm').pixel_array
+            contour_arr = np.zeros_like(img_arr)
+            contours.append(contour_arr)
 
-    # LEFT TO RIGHT SCAN
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[i].append((i, j))
-
-    for i in row_pixels:
-        pixels = row_pixels[i]
-        j_pos = [j for i, j in pixels]
-        for j in range(min(j_pos), max(j_pos)):
-            row_pixels[i].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-
-    # TOP TO BOTTOM SCAN
-    pixel_positions = pixels  # new positions added
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[j].append((i, j))
-
-    for j in row_pixels:
-        pixels = row_pixels[j]
-        i_pos = [i for i, j in pixels]
-        for i in range(min(i_pos), max(i_pos)):
-            row_pixels[j].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-    return contour_arr
-
+    return np.array(contours)
 
 def create_image_mask_files(path, contour_file, index, img_format='png'):
     """
@@ -355,7 +278,7 @@ def create_image_mask_files(path, contour_file, index, img_format='png'):
     """
     # Extract Arrays from DICOM
     X, Y = get_data(path, contour_file, index)
-    Y = np.array([np.not_equal(floodfill(y, [0,0], 2), 2) if y.max() == 1 else y for y in Y])
+    Y = np.array([scn.binary_fill_holes(y) if y.max() == 1 else y for y in Y])
 
     # Create images and masks folders
     new_path = '/'.join(path.split('/')[:-2])
