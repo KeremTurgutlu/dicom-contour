@@ -2,27 +2,14 @@ import pydicom as dicom
 import numpy as np
 from scipy.sparse import csc_matrix
 import matplotlib.pyplot as plt
+import scipy.ndimage as scn
 from collections import defaultdict
 import os
 import shutil
 import operator
 import warnings
+import math
 
-
-def get_smallest_dcm(path, ext='.dcm'):
-    """
-    Get smallest dcm file in size given path of target dir
-    Inputs:
-        path (str): path of the the directory that has DICOM files in it
-        ext (str): extension of the DICOM files are defined with
-     Return:
-        
-    """
-    fsize_dict = {f:os.path.getsize(path +f) for f in os.listdir(path)}
-    for fname, size in [(k, fsize_dict[k]) for k in sorted(fsize_dict, key=fsize_dict.get, reverse=False)]:
-        if ext in fname:
-            return fname
-        
 def get_contour_file(path):
     """
     Get contour file from a given path by searching for ROIContourSequence 
@@ -62,8 +49,6 @@ def get_roi_names(contour_data):
     roi_seq_names = [roi_seq.ROIName for roi_seq in list(contour_data.StructureSetROISequence)]
     return roi_seq_names
     
-
-
 def coord2pixels(contour_dataset, path):
     """
     Given a contour dataset (a DICOM class) and path that has .dcm files of
@@ -77,13 +62,26 @@ def coord2pixels(contour_dataset, path):
     """
 
     contour_coord = contour_dataset.ContourData
+
     # x, y, z coordinates of the contour in mm
+    x0 = contour_coord[len(contour_coord)-3]
+    y0 = contour_coord[len(contour_coord)-2]
+    z0 = contour_coord[len(contour_coord)-1]
     coord = []
     for i in range(0, len(contour_coord), 3):
-        coord.append((contour_coord[i], contour_coord[i + 1], contour_coord[i + 2]))
+        x = contour_coord[i]
+        y = contour_coord[i+1]
+        z = contour_coord[i+2]
+        l = math.sqrt((x-x0)*(x-x0) + (y-y0)*(y-y0) + (z-z0)*(z-z0))
+        l = math.ceil(l*2)+1
+        for j in range(1, l+1):
+          coord.append([(x-x0)*j/l+x0, (y-y0)*j/l+y0, (z-z0)*j/l+z0])
+        x0 = x
+        y0 = y
+        z0 = z
 
     # extract the image id corresponding to given countour
-    # read that dicom file
+    # read that dicom file (assumes filename = sopinstanceuid.dcm)
     img_ID = contour_dataset.ContourImageSequence[0].ReferencedSOPInstanceUID
     img = dicom.read_file(path + img_ID + '.dcm')
     img_arr = img.pixel_array
@@ -95,7 +93,7 @@ def coord2pixels(contour_dataset, path):
     origin_x, origin_y, _ = img.ImagePositionPatient
 
     # y, x is how it's mapped
-    pixel_coords = [(np.ceil((y - origin_y) / y_spacing), np.ceil((x - origin_x) / x_spacing)) for x, y, _ in coord]
+    pixel_coords = [(np.round((y - origin_y) / y_spacing), np.round((x - origin_x) / x_spacing)) for x, y, _ in coord]
 
     # get contour data for the image
     rows = []
@@ -141,8 +139,6 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     return img_contour_arrays
 
 
-
-
 def plot2dcontour(img_arr, contour_arr, figsize=(20, 20)):
     """
     Shows 2d MR img with contour
@@ -177,6 +173,7 @@ def slice_order(path):
         try:
             f = dicom.read_file(path + '/' + s)
             f.pixel_array  # to ensure not to read contour file
+            assert f.Modality != 'RTDOSE'
             slices.append(f)
         except:
             continue
@@ -206,20 +203,20 @@ def get_contour_dict(contour_file, path, index):
 
     return contour_dict
 
-def get_data(path, index):
+def get_data(path, contour_file, index):
     """
     Generate image array and contour array
     Inputs:
         path (str): path of the the directory that has DICOM files in it
-        contour_dict (dict): dictionary created by get_contour_dict
-        index (int): index of the 
+        contour_file: structure file
+        index (int): index of the structure
     """
     images = []
     contours = []
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get contour file
-    contour_file = get_contour_file(path)
+    # contour_file = get_contour_file(path)
     # get slice orders
     ordered_slices = slice_order(path)
     # get contour dict
@@ -239,52 +236,37 @@ def get_data(path, index):
 
     return np.array(images), np.array(contours)
 
+def get_mask(path, contour_file, index, filled=True):
+    """
+    Generate image array and contour array
+    Inputs:
+        path (str): path of the the directory that has DICOM files in it
+        contour_file: structure file
+        index (int): index of the structure
+    """
+    contours = []
+    # handle `/` missing
+    if path[-1] != '/': path += '/'
+    # get slice orders
+    ordered_slices = slice_order(path)
+    # get contour dict
+    contour_dict = get_contour_dict(contour_file, path, index)
 
-def fill_contour(contour_arr):
-    # get initial pixel positions
-    pixel_positions = np.array([(i, j) for i, j in zip(np.where(contour_arr)[0], np.where(contour_arr)[1])])
+    for k,v in ordered_slices:
+        # get data from contour dict
+        if k in contour_dict:
+            y = contour_dict[k][1]
+            y = scn.binary_fill_holes(y) if y.max() == 1 else y
+            contours.append(y)
+        # get data from dicom.read_file
+        else:
+            img_arr = dicom.read_file(path + k + '.dcm').pixel_array
+            contour_arr = np.zeros_like(img_arr)
+            contours.append(contour_arr)
 
-    # LEFT TO RIGHT SCAN
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[i].append((i, j))
+    return np.array(contours)
 
-    for i in row_pixels:
-        pixels = row_pixels[i]
-        j_pos = [j for i, j in pixels]
-        for j in range(min(j_pos), max(j_pos)):
-            row_pixels[i].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-
-    # TOP TO BOTTOM SCAN
-    pixel_positions = pixels  # new positions added
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[j].append((i, j))
-
-    for j in row_pixels:
-        pixels = row_pixels[j]
-        i_pos = [i for i, j in pixels]
-        for i in range(min(i_pos), max(i_pos)):
-            row_pixels[j].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-    return contour_arr
-
-
-def create_image_mask_files(path, index, img_format='png'):
+def create_image_mask_files(path, contour_file, index, img_format='png'):
     """
     Create image and corresponding mask files under to folders '/images' and '/masks'
     in the parent directory of path.
@@ -295,13 +277,13 @@ def create_image_mask_files(path, index, img_format='png'):
         img_format (str): image format to save by, png by default
     """
     # Extract Arrays from DICOM
-    X, Y = get_data(path, index)
-    Y = np.array([fill_contour(y) if y.max() == 1 else y for y in Y])
+    X, Y = get_data(path, contour_file, index)
+    Y = np.array([scn.binary_fill_holes(y) if y.max() == 1 else y for y in Y])
 
     # Create images and masks folders
     new_path = '/'.join(path.split('/')[:-2])
     os.makedirs(new_path + '/images/', exist_ok=True)
     os.makedirs(new_path + '/masks/', exist_ok=True)
     for i in range(len(X)):
-        plt.imsave(new_path + f'/images/image_{i}.{img_format}', X[i, :, :])
-        plt.imsave(new_path + f'/masks/mask_{i}.{img_format}', Y[i, :, :])
+        plt.imsave(new_path + f'/images/image_{i}.{img_format}', X[i])
+        plt.imsave(new_path + f'/masks/mask_{i}.{img_format}', Y[i])
