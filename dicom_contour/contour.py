@@ -1,4 +1,5 @@
 import pydicom as dicom
+from pydicom import dcmread
 import numpy as np
 from scipy.sparse import csc_matrix
 import matplotlib.pyplot as plt
@@ -48,7 +49,62 @@ def get_roi_names(contour_data):
     """
     roi_seq_names = [roi_seq.ROIName for roi_seq in list(contour_data.StructureSetROISequence)]
     return roi_seq_names
+
+# @auther Surajit Kundu, @email surajit.113125@gmail.com
+def triplets(iterable):
+    ''' It generates an triplets from the iterable.
+    :input iterable: It is an iterable
+    :return: It returns an iterable that provides triplets of the input iterable.
+    '''
+    newIterator = iter(iterable)
+    return zip(newIterator,newIterator,newIterator)
+
+# @auther Surajit Kundu, @email surajit.113125@gmail.com 
+# define a function for converting ContourData to Pixel coordinates, It can be replaced with coord2pixels
+def rtstructToPixels(contourDataset, dcmDirectoryPath):
+    """
+    Defination: This function takes RT Structure contour sequence and corresponding DICOM images directory path as an inputs 
+                and returns the pixel arrays for contours, their corresponding images, and image id (SOP Instance UID).
+    Inputs: 
+            contourDataset: DICOM dataset class that is identified as (3006, 0016) Contour Image Sequence
+            dcmDirectoryPath: The path contains contour and image files 
+    Outputs:
+            pixels_arrays_imgID: A list that contains pixel arrays of images and contour points for a given contour file 
+                                and corresponding image id (SOP Instance UID)
     
+    """
+    # handle the '/' missing case
+    if dcmDirectoryPath[-1] != '/': dcmDirectoryPath += '/'
+    contour_coordinates = contourDataset.ContourData
+    img_ID = contourDataset.ContourImageSequence[0].ReferencedSOPInstanceUID
+    img = dcmread(dcmDirectoryPath + img_ID + '.dcm')
+    imageOrientation = img.ImageOrientationPatient
+    pixelSpacing = img.PixelSpacing
+    imagePosition = img.ImagePositionPatient
+    
+    listPoints = triplets(contour_coordinates)
+    rows = []
+    cols = []    
+    for point in listPoints:
+        X = [float(imageOrientation[i]) for i in range(3)]
+        Y = [float(imageOrientation[i+3]) for i in range(3)]
+        di = float(pixelSpacing[0])
+        dj = float(pixelSpacing[1])
+        S = [float(imagePosition[i]) for i in range(len(imagePosition))]
+        M = np.mat([[X[0]*di,Y[0]*dj,1,S[0] ],\
+                    [X[1]*di,Y[1]*dj,1,S[1] ],\
+                    [X[2]*di,Y[2]*dj,1,S[2] ],\
+                    [0,0,0,1 ]])
+        MInv = np.linalg.inv(M) #Inverser of M    
+        coord = np.mat([[float(point[0])],[float(point[1])],[float(point[2])],[1.0]]);
+        res = MInv * coord
+        row, col = int(np.round(res[1,0])),int(np.round(res[0,0]))
+        rows.append(row)
+        cols.append(col)
+    img_arr = img.pixel_array    
+    contour_arr = csc_matrix((np.ones_like(rows), (rows, cols)), dtype=np.int8, shape=(img_arr.shape[0], img_arr.shape[1])).toarray()
+    return img_arr, contour_arr, img_ID    
+
 def coord2pixels(contour_dataset, path):
     """
     Given a contour dataset (a DICOM class) and path that has .dcm files of
@@ -124,7 +180,7 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     RTV = f.ROIContourSequence[ROIContourSeq]
     # get contour datasets in a list
     contours = [contour for contour in RTV.ContourSequence]
-    img_contour_arrays = [coord2pixels(cdata, path) for cdata in contours]  # list of img_arr, contour_arr, im_id
+    img_contour_arrays = [rtstructToPixels(cdata, path) for cdata in contours]  # list of img_arr, contour_arr, im_id
 
     # debug: there are multiple contours for the same image indepently
     # sum contour arrays and generate new img_contour_arrays
